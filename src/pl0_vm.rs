@@ -566,8 +566,16 @@ impl PL0VM {
                     };
                     if self.debug {
                         print!("{}\n{}", data.i64(), data.i64());
-                    } else {
-                        println!("{}", data.i64());
+                    }
+                    /*
+                    - changed println! to print! for custom printInstruction in ByteCodeGenerator
+                    - added fluch after print! for emediate output
+                        - println!:     auto-newline &flush
+                        - print!:       no auto-newline & no flush
+                    */
+                    else {
+                        print!("{}", data.i64());
+                        std::io::stdout().flush().unwrap();
                     }
                 }
                 OpCode::InputToAddr => {
@@ -790,8 +798,16 @@ impl PL0VM {
                     };
                     if self.debug {
                         print!("\"{str}\"\n{str}");
-                    } else {
-                        println!("{str}");
+                    }
+                    /*
+                    - changed println! to print! for custom printInstruction in ByteCodeGenerator
+                    - added fluch after print! for emediate output
+                        - println!:     auto-newline &flush
+                        - print!:       no auto-newline & no flush
+                    */
+                    else {
+                        print!("{str}");
+                        std::io::stdout().flush().unwrap();
                     }
                 }
 
