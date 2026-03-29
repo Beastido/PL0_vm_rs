@@ -823,8 +823,55 @@ impl PL0VM {
                     break;
                 }
 
-                OpCode::Put => { todo!() }
-                OpCode::Get => { todo!() }
+                /*
+                ---- Store variable value at dynamic calculated address ----
+                Stack before (bottom -> top): ... | AddressOffset | Value
+                Stack after: ... Stack[abs_addr] = Value
+            
+                ---- Sequence of operations: ----
+                1. Pop Value from stack
+                2. Pop AddressOffset from stack
+                3. Calculate AbsoluteAddress = fp + AddressOffset
+                4. Write Value to stack at AbsoluteAddress
+                */
+                OpCode::Put => {
+                    let data = match pop_data(&mut stack) {
+                        Some(val) => val,
+                        None => return error(&t!("pl0.error.invalid_stack_read")),
+                    };
+                    let addr = match pop_data(&mut stack) {
+                        Some(val) => val,
+                        None => return error(&t!("pl0.error.invalid_stack_read")),
+                    }.i64();
+                    let abs_addr = offsetted(&fp, addr as isize);
+                    if self.debug { println!("Put: addr (rel) = {addr}, abs_addr = {abs_addr}, value = {:?}", data); }
+                    set_addr(&mut stack, &abs_addr, &data);
+                }
+
+                /*
+                ---- Get variable value from dynamic calculated address ----
+                Stack before (bottom -> top): ... | addressOffset
+                Stack after: ... | Value
+            
+                ---- Sequence of operations: ----
+                0. ADD-Instruction:  addressOffset = baseAddress + indexOffset
+                1. Pop addressOffset from stack
+                2. Read Value at stack[addressOffset]
+                3. push value onto the stack
+                */
+                OpCode::Get => {
+                    let addr = match pop_data(&mut stack) {
+                        Some(val) => val,
+                        None => return error(&t!("pl0.error.invalid_stack_read")),
+                    }.i64();
+                    let data = match self.bytes_to_data(&stack.get((addr as usize)..)) {
+                        Some(val) => val,
+                        None => return error(&t!("pl0.error.invalid_stack_read")),
+                    };
+                    if self.debug { println!("Get: addr = {addr}, value = {:?}", data); }
+                    push_data(&mut stack, data);
+                }
+
                 OpCode::OpAddAddr => { todo!() }
             }
 
