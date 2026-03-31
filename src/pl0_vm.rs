@@ -847,7 +847,7 @@ impl PL0VM {
                         None => return error(&t!("pl0.error.invalid_stack_read")),
                     }.i64();
                     let abs_addr = offsetted(&fp, addr as isize);
-                    if self.debug { println!("Put: addr (rel) = {addr}, abs_addr = {abs_addr}, value = {:?}", data); }
+                    if self.debug { print!("addr (rel) = {addr}, abs_addr = {abs_addr}, value = {:?}", data.i64()); }
                     set_addr(&mut stack, &abs_addr, &data);
                 }
 
@@ -871,7 +871,7 @@ impl PL0VM {
                         Some(val) => val,
                         None => return error(&t!("pl0.error.invalid_stack_read")),
                     };
-                    if self.debug { println!("Get: addr = {addr}, value = {:?}", data); }
+                    if self.debug { print!("addr = {addr}, value = {:?}", data.i64()); }
                     push_data(&mut stack, data);
                 }
 
