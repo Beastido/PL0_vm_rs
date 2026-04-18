@@ -18,6 +18,8 @@ struct Procedure {
     start_pos: usize,
     // starts with space for variables
     frame_ptr: usize,
+    // number of parameters (=0 if no parameters [EntryProc], n if parameters [EntryProcEx])
+    param_count: usize,
 }
 
 // wrapper for differently sized integers
@@ -243,6 +245,12 @@ impl PL0VM {
         });
     }
 
+    /**
+     * - opc(opCode-Position) ... stores current pc-position (position of EntryProc OpCode)
+     * - load metadata of found procedure ...
+     * - remaining bytes (rem_bytes) = curr_program_counter - start_pos
+     * - Break if:  no bytes remaining and all procedures found
+     */
     fn load_data(&self) -> Option<(Vec<Procedure>, Vec<Data>)> {
         let mut procedure_count = self.read_arg(0).expect("failed to read procedure count - should be unreachable");
         let mut procedures = Vec::with_capacity(procedure_count as usize);
@@ -256,25 +264,49 @@ impl PL0VM {
                 None => { error(&t!("pl0.error.preload_error")); return None },
             };
             let opc = pc;
-            pc += 1;
+            pc += 1;                // skip EntryProc OpCode
+            /**
+             *---- load metadata of found procedures ----
+             * 1. read codeLength of procedure (rem_bytes)
+             * 2. read index of procedure in procedures[] (proc_id)
+             * 3. skip arguments: codeLength, procId, frameSize (not needed to preload data)
+             * 4. Does parameterCount (4. OpCode argument) exist?
+             *      >> read parameterCount
+             *      >> skip parameterCount argument (2 bytes)
+             *      else:   parameterCount = 0
+             * 5. start_pos of procedure = position of EntryProc OpCode (opc)
+             * 6. reset frame_ptr to 0 and set frame_ptr when procedure is called
+             * 
+             */
             if rem_bytes == 0 && byte == <OpCode as Into<u8>>::into(OpCode::EntryProc) {
                 rem_bytes = match self.read_arg(pc) {
                     Some(val) => val,
                     None => { error(&t!("pl0.error.preload_error")); return None },
                 };
-                pc += ARG_SIZE;
+                pc += ARG_SIZE;         // skip codeLength
                 let proc_id = match self.read_arg(pc) {
                     Some(val) => val,
                     None => { error(&t!("pl0.error.preload_error")); return None },
                 } as usize;
-                pc += ARG_SIZE * 2;
+                pc += ARG_SIZE * 2;     // skip procId & frameSize
+
+                let entry_proc_ex = <OpCode as Into<u8>>::into(OpCode::EntryProcEx);
+                let param_count = if byte == entry_proc_ex {
+                    match self.read_arg(pc) {
+                        Some(val) => val,
+                        None => { error(&t!("pl0.error.preload_error")); return None },
+                    } as usize;
+                    pc += ARG_SIZE;     // skip paramCount
+                } else { 0 };           // EntryProc default: parameterCount = 0
+
                 if proc_id >= procedures.len() {
                     error(&t!("pl0.error.invalid_preload_procedure"));
                     return None;
                 }
                 procedures[proc_id] = Some(Procedure {
-                    start_pos: pc - 1 - ARG_SIZE * 3,
+                    start_pos: opc,
                     frame_ptr: 0,
+                    param_count,
                 });
                 procedure_count -= 1;
             }
@@ -402,6 +434,79 @@ impl PL0VM {
                     stack.resize(fp + varlen, 0);
                     if self.debug { print!("{}", t!("pl0.reserved_varspace", bytes = varlen)); }
                 }
+                /**
+                 *---- entry procedure: ----
+                 * 
+                 * Bytecode structure (extended format):
+                 *      [pc-1] OpCode::EntryProc
+                 *      [pc]   codeLength
+                 *      [pc+2] procId
+                 *      [pc+4] frameSize
+                 *      [pc+6] parameterCount (if codeLength > std_header_size(7))
+                 *
+                 *---- sequence of operations: ----
+                 *    1. CallProc (push return_info_bytes onto stack (3*8 bytes)):
+                 *      >> push return address (pc)
+                 *      >> push frame pointer (fp)
+                 *      >> push current procedure index (cur_proc_i)
+                 *    2. EntryProc:
+                 *      >> read codeLength, procId, frameSize, parameterCount
+                 *      >> set fp to start of new procedure frame (after return_info_bytes)
+                 *      >> allocate space for local variables (& parameters) on stack
+                 *         -> starting at fp, initialized with 0 
+                 *      >> copy parameters from stack into frame slots (if parameterCount > 0)
+                 *          -> else calling procedure has no access to parameters (parameters are located below fp in stack)
+                 */
+                OpCode::EntryProcEx => {
+                    pc += ARG_SIZE;
+                    let proc_i = match pop_argument(&mut pc) {
+                        Some(val) => val,
+                        None => return error(&t!("pl0.error.invalid_arg_read", addr = pc:{:04X})),
+                    };
+                    if proc_i < 0 {
+                        error(&t!("pl0.enter_invalid_proc", id = proc_i));
+                        return;
+                    }
+                    let varlen = match pop_argument(&mut pc) {
+                        Some(val) => val,
+                        None => return error(&t!("pl0.error.invalid_arg_read", addr = pc:{:04X})),
+                    } as usize;
+                    let param_count = match pop_argument(&mut pc) {
+                        Some(val) => val as usize,
+                        None => return error(&t!("pl0.error.invalid_arg_read", addr = pc:{:04X})),
+                    };
+                    // relocate fp & resize stack for local variables
+                    fp = procedures[proc_i as usize].frame_ptr;
+                    stack.resize(fp + varlen, 0);
+                    // copy parameters into frame slots
+                    if param_count > 0 {
+                        let return_info_bytes = 3 * 8;
+                        let args_start = fp - return_info_bytes - (param_count * self.data_size());
+                        for i in 0..param_count {
+                            let src_addr = args_start + i * self.data_size();
+                            let dest_addr = fp        + i * self.data_size();
+                            // bytes_to_data converts bytes of one argument into data
+                            let arg = match self.bytes_to_data(&stack.get(src_addr..)) {    // from src_addr to end of stack
+                                Some(val) => val,
+                                None => return error(&t!("pl0.error.invalid_stack_read")),
+                            };
+                            //push data to dest_addr
+                            set_addr(&mut stack, &dest_addr, &arg);
+                            if self.debug { print!("\n\t  arg[{i}] = {} -> frame[{dest_addr}]", arg.i64()); }
+                        }
+                    }
+                    if self.debug { print!("{}", t!("pl0.reserved_varspace", bytes = varlen)); }
+                }
+                /**
+                 *---- return procedure: ----
+                 * pop procedure frame and header from stack to restore state of calling procedure
+                 *
+                 *---- sequence of operations: ----
+                 *  1. truncate from frame_ptr  -> pop local variables (and parameters)
+                 *  2. drain 3x 8 Bytes       -> read and pop OldProcId, OldFP, RetPC (LIFO)
+                 *  3. truncate param_bytes   -> pop original parameters (if parameterCount > 0)
+                 *  4. pc, fp, cur_proc_i     -> restore state of calling procedure
+                 */
                 OpCode::ReturnProc => {
                     if cur_proc_i == 0 {
                         if self.debug { println!("{}", t!("pl0.exiting")); }
@@ -412,6 +517,11 @@ impl PL0VM {
                         let new_fp = u64::from_le_bytes(stack.drain(stack.len() - 8..).collect::<Vec<u8>>().try_into().expect("jumping back failed - stack invalid"));
                         let new_pc = u64::from_le_bytes(stack.drain(stack.len() - 8..).collect::<Vec<u8>>().try_into().expect("jumping back failed - stack invalid"));
                         if self.debug { print!("pc: {pc} => {new_pc}, fp: {fp} => {new_fp}, cpi: {cur_proc_i} => {new_proc_i}"); }
+                        let param_bytes = procedures[cur_proc_i].param_count * self.data_size();
+                        if param_bytes > 0 {
+                            stack.truncate(stack.len() - param_bytes);
+                            if self.debug { print!(", removed {param_bytes} param bytes"); }
+                        }
                         pc = new_pc as usize;
                         fp = new_fp as usize;
                         cur_proc_i = new_proc_i as usize;

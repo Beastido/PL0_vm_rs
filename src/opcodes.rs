@@ -70,7 +70,7 @@ pub enum OpCode {
     // Argumente: Länge der Prozedur in Bytes, Prozedur-ID, Bytes auf Stack benötigt für Variablen
     EntryProc = 0x1A,
 
-    // erweiterte Codes
+    //=== Erweiterungen ===
     // Argument: Null-terminierter String
     PutString = 0x1B,
     // auf Stack: oben = beliebiges Datum
@@ -81,10 +81,13 @@ pub enum OpCode {
     // nur für VM
     EndOfCode = 0x1E,
 
-    // neue Codes - Funktionsweise unbekannt
+    // für dynamische Adressberechnung
     Put = 0x1F,
     Get = 0x20,
-    OpAddAddr = 0x21
+    OpAddAddr = 0x21,       // Funktionsweise unbekannt
+    
+    // Erweitertes Format mit Parameteranzahl als 4. Argument
+    EntryProcEx = 0x22
 }
 
 impl Display for OpCode {
