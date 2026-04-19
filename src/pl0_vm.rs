@@ -278,7 +278,10 @@ impl PL0VM {
              * 6. reset frame_ptr to 0 and set frame_ptr when procedure is called
              * 
              */
-            if rem_bytes == 0 && byte == <OpCode as Into<u8>>::into(OpCode::EntryProc) {
+            let entry_proc    = <OpCode as Into<u8>>::into(OpCode::EntryProc);
+            let entry_proc_ex = <OpCode as Into<u8>>::into(OpCode::EntryProcEx);
+            
+            if rem_bytes == 0 && (byte == entry_proc || byte == entry_proc_ex) {
                 rem_bytes = match self.read_arg(pc) {
                     Some(val) => val,
                     None => { error(&t!("pl0.error.preload_error")); return None },
@@ -290,7 +293,6 @@ impl PL0VM {
                 } as usize;
                 pc += ARG_SIZE * 2;     // skip procId & frameSize
 
-                let entry_proc_ex = <OpCode as Into<u8>>::into(OpCode::EntryProcEx);
                 let param_count = if byte == entry_proc_ex {
                     match self.read_arg(pc) {
                         Some(val) => val,
